@@ -289,10 +289,10 @@ uint64_t subscription::sid() { return m_sid; }
 template <class SocketType>
 class connection : public iconnection, public parser_observer, private boost::asio::detail::noncopyable {
 public:
-    connection(aio& io, const logger& log, const on_connected_cb& connected_cb,
+    connection(aio& io, const on_connected_cb& connected_cb,
                const on_disconnected_cb& disconnected_cb, const std::shared_ptr<ssl::context>& ctx);
 
-    connection(aio& io, const logger& log, const on_connected_cb& connected_cb,
+    connection(aio& io, const on_connected_cb& connected_cb,
                const on_disconnected_cb& disconnected_cb);
 
     virtual void start(const connect_config& conf) override;
@@ -312,11 +312,11 @@ public:
 private:
     virtual void on_ping(ctx c) override;
 
-    virtual void on_pong(ctx) override { m_log->trace("pong recived"); }
+    virtual void on_pong(ctx) override { }
 
-    virtual void on_ok(ctx) override { m_log->trace("ok recived"); }
+    virtual void on_ok(ctx) override { }
 
-    virtual void on_error(string_view err, ctx) override { m_log->error("error message from server {}", err); }
+    virtual void on_error(string_view err, ctx) override { }
 
     virtual void on_info(string_view info, ctx c) override;
 
@@ -337,7 +337,6 @@ private:
 
     uint64_t m_sid;
     std::size_t m_max_payload;
-    logger m_log;
     aio& m_io;
 
     bool m_is_connected;
@@ -382,27 +381,27 @@ void load_certificates(const ssl_config& conf, ssl::context& ctx) {
     }
 }
 
-iconnection_sptr create_connection(aio& io, const logger& log, const on_connected_cb& connected_cb,
+iconnection_sptr create_connection(aio& io, const on_connected_cb& connected_cb,
                                    const on_disconnected_cb& disconnected_cb, optional<ssl_config> ssl_conf) {
     if (ssl_conf.has_value()) {
         auto ssl_ctx = std::make_shared<ssl::context>(ssl::context::tlsv12_client);
         load_certificates(ssl_conf.value(), *ssl_ctx);
-        return std::make_shared<connection<ssl_socket>>(io, log, connected_cb, disconnected_cb, ssl_ctx);
+        return std::make_shared<connection<ssl_socket>>(io, connected_cb, disconnected_cb, ssl_ctx);
     } else {
-        return std::make_shared<connection<raw_socket>>(io, log, connected_cb, disconnected_cb);
+        return std::make_shared<connection<raw_socket>>(io, connected_cb, disconnected_cb);
     }
 }
 
 template <class SocketType>
-connection<SocketType>::connection(aio& io, const logger& log, const on_connected_cb& connected_cb,
+connection<SocketType>::connection(aio& io, const on_connected_cb& connected_cb,
                                    const on_disconnected_cb& disconnected_cb, const std::shared_ptr<ssl::context>& ctx)
-    : m_sid(0), m_max_payload(0), m_log(log), m_io(io), m_is_connected(false), m_stop_flag(false),
+    : m_sid(0), m_max_payload(0), m_io(io), m_is_connected(false), m_stop_flag(false),
       m_connected_cb(connected_cb), m_disconnected_cb(disconnected_cb), m_ssl_ctx(ctx), m_socket(io, *ctx.get()) {}
 
 template <class SocketType>
-connection<SocketType>::connection(aio& io, const logger& log, const on_connected_cb& connected_cb,
+connection<SocketType>::connection(aio& io, const on_connected_cb& connected_cb,
                                    const on_disconnected_cb& disconnected_cb)
-    : m_sid(0), m_max_payload(0), m_log(log), m_io(io), m_is_connected(false), m_stop_flag(false),
+    : m_sid(0), m_max_payload(0), m_io(io), m_is_connected(false), m_stop_flag(false),
       m_connected_cb(connected_cb), m_disconnected_cb(disconnected_cb), m_socket(io) {}
 
 template <class SocketType> void connection<SocketType>::start(const connect_config& conf) {
@@ -479,7 +478,6 @@ connection<SocketType>::subscribe(string_view subject, optional<string_view> que
 }
 
 template <class SocketType> void connection<SocketType>::on_ping(ctx c) {
-    m_log->trace("ping recived");
     const std::string pong("PONG\r\n");
     m_socket.async_write(boost::asio::buffer(pong), boost::asio::transfer_exactly(pong.size()), c[ec]);
     handle_error(c);
@@ -488,9 +486,7 @@ template <class SocketType> void connection<SocketType>::on_ping(ctx c) {
 template <class SocketType> void connection<SocketType>::on_info(string_view info, ctx) {
     using nlohmann::json;
     auto j = json::parse(info);
-    m_log->debug("got info {}", j.dump());
     m_max_payload = j["max_payload"].get<std::size_t>();
-    m_log->trace("info recived and parsed");
 }
 
 template <class SocketType>
@@ -505,7 +501,6 @@ void connection<SocketType>::on_message(string_view subject, string_view sid_str
     auto s = handle_error(c);
 
     if (s.failed()) {
-        m_log->error("failed to read {}", s.error());
         return;
     }
 
@@ -514,24 +509,17 @@ void connection<SocketType>::on_message(string_view subject, string_view sid_str
     try {
         sid_u = static_cast<std::size_t>(std::stoll(sid_str.data(), nullptr, 10));
     } catch (const std::exception& e) {
-        m_log->error("can't parse sid: {}", e.what());
         return;
     }
 
     auto it = m_subs.find(sid_u);
 
     if (it == m_subs.end()) {
-        m_log->trace("dropping message because subscription not found: topic: {}, sid: {}", subject, sid_str);
         return;
     }
 
     if (it->second->m_cancel) {
-        m_log->trace("subscribtion canceled {}", sid_str);
         s = unsubscribe(it->second, c);
-
-        if (s.failed()) {
-            m_log->error("unsubscribe failed: {}", s.error());
-        }
     }
 
     auto b = m_buf.data();
@@ -549,7 +537,6 @@ template <class SocketType> status connection<SocketType>::do_connect(const conn
     auto s = handle_error(c);
 
     if (s.failed()) {
-        m_log->error("async resolve of {}:{} failed with error: {}", conf.address, conf.port, s.error());
         return s;
     }
 
@@ -565,7 +552,6 @@ template <class SocketType> status connection<SocketType>::do_connect(const conn
     s = handle_error(c);
 
     if (s.failed()) {
-        m_log->error("read server info failed {}", s.error());
         return s;
     }
 
@@ -574,7 +560,6 @@ template <class SocketType> status connection<SocketType>::do_connect(const conn
     s = parse_header(header, is, this, c);
 
     if (s.failed()) {
-        m_log->error("process message failed with error: {}", s.error());
         return s;
     }
 
@@ -582,7 +567,6 @@ template <class SocketType> status connection<SocketType>::do_connect(const conn
     s = handle_error(c);
 
     if (s.failed()) {
-        m_log->error("async handshake failed {}", s.error());
         return s;
     }
 
@@ -591,7 +575,6 @@ template <class SocketType> status connection<SocketType>::do_connect(const conn
     s = handle_error(c);
 
     if (s.failed()) {
-        m_log->error("failed to write info {}", s.error());
         return s;
     }
 
@@ -603,7 +586,6 @@ template <class SocketType> void connection<SocketType>::run(const connect_confi
 
     for (;;) {
         if (m_stop_flag) {
-            m_log->debug("stopping main connection loop");
             return;
         }
 
@@ -612,7 +594,6 @@ template <class SocketType> void connection<SocketType>::run(const connect_confi
             auto s = do_connect(conf, c);
 
             if (s.failed()) {
-                m_log->error("connect failed with error {}", s.error());
                 continue;
             }
 
@@ -627,7 +608,6 @@ template <class SocketType> void connection<SocketType>::run(const connect_confi
         auto s = handle_error(c);
 
         if (s.failed()) {
-            m_log->error("failed to read {}", s.error());
             continue;
         }
 
@@ -635,7 +615,6 @@ template <class SocketType> void connection<SocketType>::run(const connect_confi
         s = parse_header(header, is, this, c);
 
         if (s.failed()) {
-            m_log->error("process message failed with error: {}", s.error());
             continue;
         }
     }
@@ -646,10 +625,6 @@ template <class SocketType> status connection<SocketType>::handle_error(ctx c) {
         auto original_msg = ec.message();
         m_is_connected = false;
         m_socket.close(ec); // TODO: handle it if error
-
-        if (ec.failed()) {
-            m_log->error("error on socket close {}", ec.message());
-        }
 
         if (m_disconnected_cb != nullptr) {
             m_disconnected_cb(*this, std::move(c));
@@ -685,7 +660,6 @@ template <class SocketType> std::string connection<SocketType>::prepare_info(con
 
     auto info = j.dump();
     auto connect_data = fmt::format(connect_payload, info);
-    m_log->debug("sending data on connect {}", info);
     return connect_data;
 }
 

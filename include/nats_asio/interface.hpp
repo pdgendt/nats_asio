@@ -25,7 +25,6 @@ Software is furnished to do so, subject to the following conditions:
 #pragma once
 
 #include <fmt/format.h>
-#include <spdlog/spdlog.h>
 
 #include <boost/asio/deadline_timer.hpp>
 #include <boost/asio/io_context.hpp>
@@ -58,7 +57,6 @@ using boost::string_view;
 #endif
 
 typedef boost::asio::io_context aio;
-typedef std::shared_ptr<spdlog::logger> logger;
 typedef boost::asio::yield_context ctx;
 
 typedef std::function<void(string_view subject, optional<string_view> reply_to, const char* raw, std::size_t n, ctx c)>
@@ -141,7 +139,7 @@ typedef std::shared_ptr<iconnection> iconnection_sptr;
 typedef std::function<void(iconnection&, ctx)> on_connected_cb;
 typedef std::function<void(iconnection&, ctx)> on_disconnected_cb;
 
-iconnection_sptr create_connection(aio& io, const logger& log, const on_connected_cb& connected_cb,
+iconnection_sptr create_connection(aio& io, const on_connected_cb& connected_cb,
                                    const on_disconnected_cb& disconnected_cb, optional<ssl_config> ssl_conf);
 
 } // namespace nats_asio
